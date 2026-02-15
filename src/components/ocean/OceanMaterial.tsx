@@ -2,289 +2,28 @@ import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { OceanParams } from "@/types/ocean-params";
-
-const vertexShader = `
-  precision highp float;
-  uniform float uTime;
-  uniform float uAmplitude;
-  uniform float uFrequency;
-  uniform float uSteepness;
-  uniform float uSpeed;
-  uniform float uDirection;
-  uniform float uCapillaryScale;
-  uniform float uCapillaryIntensity;
-  uniform float uWindDir;
-  uniform float uWindSpeed;
-
-  varying vec3 vWorldPos;
-  varying vec3 vNormal;
-  varying float vFoamFactor;
-  varying float vHeight;
-
-  #define PI 3.14159265359
-
-  // Pre-defined wave table: direction angle (rad), frequency multiplier, amplitude multiplier
-  // 12 waves with very deliberate angular spread
-  const int NUM_WAVES = 12;
-  
-  void main() {
-    vec3 pos = position;
-    // PlaneGeometry is XY; we rotate -PI/2 around X to lay flat.
-    // So sample waves using pos.xy (which becomes xz after rotation).
-    vec2 xz = pos.xy;
-
-    float baseDir = uDirection * PI / 180.0;
-    float windRad = uWindDir * PI / 180.0;
-
-    // Explicitly define 12 waves with diverse directions
-    // [angle_offset, freq_mult, amp_mult, speed_mult]
-    // Swell: 4 waves, moderate spread
-    // Cross swell: 3 waves, ~90 degrees off
-    // Wind chop: 5 waves, high freq, all directions
-    
-    float angles[12];
-    float freqs[12];
-    float amps[12];
-    float speeds[12];
-    
-    // Primary swell
-    angles[0] = baseDir;
-    angles[1] = baseDir + 0.35;
-    angles[2] = baseDir - 0.25;
-    angles[3] = baseDir + 0.7;
-    
-    // Cross swell  
-    angles[4] = baseDir + 1.2;
-    angles[5] = baseDir + 1.8;
-    angles[6] = baseDir - 1.4;
-    
-    // Wind chop (varied directions)
-    angles[7] = windRad + 0.0;
-    angles[8] = windRad + 1.05;
-    angles[9] = windRad - 0.9;
-    angles[10] = windRad + 2.1;
-    angles[11] = windRad - 1.7;
-    
-    // Swell: low freq, high amp
-    freqs[0] = 0.3; freqs[1] = 0.45; freqs[2] = 0.55; freqs[3] = 0.7;
-    amps[0] = 1.0;  amps[1] = 0.7;  amps[2] = 0.5;  amps[3] = 0.35;
-    speeds[0] = 1.0; speeds[1] = 0.9; speeds[2] = 1.1; speeds[3] = 0.85;
-    
-    // Cross swell: medium freq, medium amp
-    freqs[4] = 0.6; freqs[5] = 0.9; freqs[6] = 0.75;
-    amps[4] = 0.4;  amps[5] = 0.25; amps[6] = 0.3;
-    speeds[4] = 0.95; speeds[5] = 1.05; speeds[6] = 0.9;
-    
-    // Wind chop: high freq, low amp, wind-scaled
-    float windScale = clamp(uWindSpeed / 10.0, 0.1, 2.0);
-    freqs[7] = 1.5; freqs[8] = 2.2; freqs[9] = 1.8; freqs[10] = 2.8; freqs[11] = 3.2;
-    amps[7] = 0.12 * windScale; amps[8] = 0.08 * windScale; amps[9] = 0.1 * windScale;
-    amps[10] = 0.06 * windScale; amps[11] = 0.04 * windScale;
-    speeds[7] = 1.3; speeds[8] = 1.5; speeds[9] = 1.2; speeds[10] = 1.6; speeds[11] = 1.4;
-
-    vec3 totalDisp = vec3(0.0);
-    vec3 T = vec3(1.0, 0.0, 0.0);
-    vec3 B = vec3(0.0, 0.0, 1.0);
-    float maxH = 0.0;
-
-    for (int i = 0; i < NUM_WAVES; i++) {
-      vec2 dir = vec2(cos(angles[i]), sin(angles[i]));
-      float f = uFrequency * freqs[i];
-      float a = uAmplitude * amps[i];
-      float k = 2.0 * PI * f;
-      float omega = sqrt(9.81 * k); // deep-water dispersion
-      float phase = dot(dir, xz) * k - omega * uTime * uSpeed * speeds[i];
-      float Q = uSteepness / (k * a * float(NUM_WAVES) * 0.25 + 0.001);
-      Q = min(Q, 1.0); // clamp to prevent looping
-
-      float sinP = sin(phase);
-      float cosP = cos(phase);
-
-      totalDisp.x += Q * a * dir.x * cosP;
-      totalDisp.y += a * sinP;
-      totalDisp.z += Q * a * dir.y * cosP;
-
-      float WA = k * a;
-      T.x -= Q * dir.x * dir.x * WA * sinP;
-      T.y += dir.x * WA * cosP;
-      T.z -= Q * dir.x * dir.y * WA * sinP;
-
-      B.x -= Q * dir.x * dir.y * WA * sinP;
-      B.y += dir.y * WA * cosP;
-      B.z -= Q * dir.y * dir.y * WA * sinP;
-
-      maxH += a;
-    }
-
-    // Capillary micro-ripples (4 directions, very fast, tiny amp)
-    float capAngles[4];
-    capAngles[0] = windRad;
-    capAngles[1] = windRad + 1.57;
-    capAngles[2] = windRad + 0.78;
-    capAngles[3] = windRad - 0.78;
-    
-    for (int i = 0; i < 4; i++) {
-      vec2 dir = vec2(cos(capAngles[i]), sin(capAngles[i]));
-      float f = uCapillaryScale * (0.15 + float(i) * 0.08);
-      float a = uCapillaryIntensity * 0.006 / (1.0 + float(i) * 0.5);
-      float k = 2.0 * PI * f;
-      float omega = sqrt(9.81 * k);
-      float phase = dot(dir, xz + vec2(totalDisp.x, totalDisp.y) * 0.1) * k - omega * uTime * 2.5;
-      float sinP = sin(phase);
-      float cosP = cos(phase);
-      
-      totalDisp.y += a * sinP;
-      float WA = k * a;
-      T.y += dir.x * WA * cosP;
-      B.y += dir.y * WA * cosP;
-    }
-
-    // PlaneGeometry is XY, rotation -PI/2 around X maps:
-    // local X → world X, local Y → world Z, local -Z → world Y (up)
-    // Gerstner wave space: X = horiz1, Y = height, Z = horiz2
-    // Map to local: localX = waveX, localY = waveZ, localZ = -waveY
-    pos.x += totalDisp.x;
-    pos.y += totalDisp.z;
-    pos.z -= totalDisp.y; // height goes into -Z (becomes +Y after rotation)
-
-    // Remap normal from wave space (Y-up) to local space
-    vec3 waveN = normalize(cross(B, T));
-    waveN = faceforward(waveN, vec3(0.0, -1.0, 0.0), waveN);
-    vec3 localN = vec3(waveN.x, waveN.z, -waveN.y);
-    vNormal = normalize((modelMatrix * vec4(localN, 0.0)).xyz);
-    vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
-    vHeight = totalDisp.y;
-
-    float heightRatio = totalDisp.y / (maxH + 0.001);
-    float slopeMag = length(vec2(T.y, B.y));
-    vFoamFactor = smoothstep(0.3, 0.85, heightRatio) * 0.8 + slopeMag * 0.4;
-
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-  }
-`;
-
-const fragmentShader = `
-  precision highp float;
-  uniform float uTime;
-  uniform vec3 uSunDir;
-  uniform float uSunIntensity;
-  uniform float uSkyIntensity;
-  uniform float uAmbientIntensity;
-  uniform float uAbsorptionR;
-  uniform float uAbsorptionG;
-  uniform float uAbsorptionB;
-  uniform float uScattering;
-  uniform float uTurbidity;
-  uniform float uFresnelPower;
-  uniform float uIOR;
-  uniform float uFoamThreshold;
-  uniform float uFoamCoverage;
-  uniform float uFoamIntensity;
-  uniform vec3 uShallowColor;
-  uniform vec3 uDeepColor;
-  uniform float uWaterDepth;
-
-  varying vec3 vWorldPos;
-  varying vec3 vNormal;
-  varying float vFoamFactor;
-  varying float vHeight;
-
-  #define PI 3.14159265359
-
-  float hash21(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-  }
-
-  float voronoiFoam(vec2 uv) {
-    vec2 i = floor(uv);
-    vec2 f = fract(uv);
-    float d = 1.0;
-    for (int x = -1; x <= 1; x++) {
-      for (int y = -1; y <= 1; y++) {
-        vec2 nb = vec2(float(x), float(y));
-        vec2 pt = vec2(hash21(i + nb), hash21(i + nb + 100.0));
-        pt = 0.5 + 0.5 * sin(uTime * 0.3 + 6.283 * pt);
-        d = min(d, length(nb + pt - f));
-      }
-    }
-    return 1.0 - smoothstep(0.0, 0.35, d);
-  }
-
-  float fresnel(vec3 V, vec3 N, float power) {
-    float f0 = pow((1.0 - uIOR) / (1.0 + uIOR), 2.0);
-    return f0 + (1.0 - f0) * pow(clamp(1.0 - max(dot(V, N), 0.0), 0.0, 1.0), power);
-  }
-
-  vec3 getSkyColor(vec3 dir) {
-    float y = max(dir.y, 0.0);
-    vec3 horizon = vec3(0.55, 0.65, 0.78);
-    vec3 zenith = vec3(0.08, 0.18, 0.45);
-    vec3 sky = mix(horizon, zenith, pow(y, 0.4));
-    float sunDot = max(dot(dir, normalize(uSunDir)), 0.0);
-    sky += vec3(1.0, 0.9, 0.7) * pow(sunDot, 128.0) * 3.0;
-    sky += vec3(1.0, 0.85, 0.6) * pow(sunDot, 12.0) * 0.4;
-    return sky * uSkyIntensity;
-  }
-
-  float ggx(float NdotH, float r) {
-    float a2 = r * r * r * r;
-    float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
-    return a2 / (PI * d * d + 0.0001);
-  }
-
-  void main() {
-    vec3 N = normalize(vNormal);
-    vec3 V = normalize(cameraPosition - vWorldPos);
-    vec3 L = normalize(uSunDir);
-    vec3 H = normalize(L + V);
-    vec3 R = reflect(-V, N);
-
-    float F = fresnel(V, N, uFresnelPower);
-    vec3 reflection = getSkyColor(R);
-
-    float NdotH = max(dot(N, H), 0.0);
-    vec3 sunCol = vec3(1.0, 0.95, 0.85);
-    vec3 spec = sunCol * (ggx(NdotH, 0.015) + ggx(NdotH, 0.12) * 0.3) * uSunIntensity;
-
-    float depth = max(uWaterDepth * 0.5 - vHeight * 2.0, 0.5);
-    vec3 absorp = vec3(exp(-uAbsorptionR * depth), exp(-uAbsorptionG * depth), exp(-uAbsorptionB * depth));
-    float df = clamp(depth / uWaterDepth, 0.0, 1.0);
-    vec3 waterCol = mix(uShallowColor, uDeepColor, pow(df, 0.5)) * absorp;
-
-    float NdotL = max(dot(N, L), 0.0);
-    float sss = pow(clamp(dot(V, -L + N * 0.4), 0.0, 1.0), 4.0) * uScattering;
-    float hScat = smoothstep(0.0, 1.0, vHeight * 0.5 + 0.5) * uScattering * 0.4;
-    vec3 scatter = vec3(0.05, 0.65, 0.5) * (sss + hScat);
-
-    waterCol = mix(waterCol, vec3(0.22, 0.28, 0.16), uTurbidity * 0.6);
-    vec3 refracted = waterCol + scatter + waterCol * NdotL * 0.15;
-    vec3 color = mix(refracted, reflection, F) + spec;
-    color += waterCol * uAmbientIntensity;
-
-    // Foam
-    float foamMask = smoothstep(uFoamThreshold, uFoamThreshold + 0.2, vFoamFactor) * uFoamCoverage;
-    float ft1 = voronoiFoam(vWorldPos.xz * 1.2 + uTime * 0.04);
-    float ft2 = voronoiFoam(vWorldPos.xz * 2.5 - uTime * 0.06);
-    float foam = foamMask * mix(ft1, ft2, 0.35);
-    vec3 foamCol = vec3(0.85, 0.9, 0.95) * uFoamIntensity * (0.7 + NdotL * 0.3);
-    color = mix(color, foamCol, clamp(foam, 0.0, 1.0));
-
-    // Distance fog
-    float dist = length(vWorldPos - cameraPosition);
-    color = mix(color, vec3(0.035, 0.05, 0.09), 1.0 - exp(-dist * 0.007));
-
-    // ACES tonemap
-    color = color * (2.51 * color + 0.03) / (color * (2.43 * color + 0.59) + 0.14);
-    color = pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2));
-
-    gl_FragColor = vec4(color, 1.0);
-  }
-`;
+import { oceanVertexShader } from "@/shaders/ocean-vertex.glsl";
+import { oceanFragmentShader } from "@/shaders/ocean-fragment.glsl";
 
 interface OceanMeshProps {
   params: OceanParams;
+}
+
+function getWaveGroupArrays(p: OceanParams) {
+  const groups = [p.primarySwell, p.secondarySwell, p.windSea, p.chop];
+  return {
+    enabled: groups.map((g) => g.enabled),
+    amp: groups.map((g) => g.amplitude),
+    freq: groups.map((g) => g.frequency),
+    steep: groups.map((g) => g.steepness),
+    dir: groups.map((g) => g.direction),
+    speed: groups.map((g) => g.speed),
+    spread: groups.map((g) => g.spread),
+    phase: groups.map((g) => g.phaseOffset),
+    numWaves: groups.map((g) => g.numWaves),
+    freqSpread: groups.map((g) => g.frequencySpread),
+    ampDecay: groups.map((g) => g.amplitudeDecay),
+  };
 }
 
 export function OceanMesh({ params }: OceanMeshProps) {
@@ -293,77 +32,308 @@ export function OceanMesh({ params }: OceanMeshProps) {
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
-      uAmplitude: { value: params.waves.amplitude },
-      uFrequency: { value: params.waves.frequency },
-      uSteepness: { value: params.waves.steepness },
-      uSpeed: { value: params.waves.speed },
-      uDirection: { value: params.waves.direction },
-      uCapillaryScale: { value: params.capillary.scale },
-      uCapillaryIntensity: { value: params.capillary.intensity },
-      uWindDir: { value: params.wind.direction },
-      uWindSpeed: { value: params.wind.speed },
+      // Wave groups
+      uWGEnabled: { value: [1, 1, 1, 1] },
+      uWGAmp: { value: [1, 0.5, 0.3, 0.1] },
+      uWGFreq: { value: [0.3, 0.5, 1.0, 2.0] },
+      uWGSteep: { value: [0.4, 0.3, 0.25, 0.2] },
+      uWGDir: { value: [45, 120, 60, 75] },
+      uWGSpeed: { value: [1, 0.9, 1.3, 1.5] },
+      uWGSpread: { value: [25, 35, 55, 90] },
+      uWGPhase: { value: [0, 1.2, 2.8, 4.1] },
+      uWGNumWaves: { value: [6, 5, 6, 8] },
+      uWGFreqSpread: { value: [1.3, 1.4, 1.5, 1.6] },
+      uWGAmpDecay: { value: [0.72, 0.65, 0.6, 0.55] },
+      // Global wave
+      uChoppiness: { value: 0.6 },
+      uGlobalAmp: { value: 1.0 },
+      uPeakSharp: { value: 1.0 },
+      uNonlinearity: { value: 0.3 },
+      // Wind
+      uWindSpeed: { value: 8.0 },
+      uWindDir: { value: 55 },
+      uGustIntensity: { value: 0.3 },
+      uGustFreq: { value: 0.15 },
+      uTurbulence: { value: 0.2 },
+      // FBM
+      uFBMOctaves: { value: 4.0 },
+      uFBMAmp: { value: 0.15 },
+      uFBMFreq: { value: 0.8 },
+      uFBMLacunarity: { value: 2.1 },
+      uFBMGain: { value: 0.45 },
+      uDomainWarp: { value: 0.2 },
+      uWarpStrength: { value: 0.3 },
+      uWarpFreq: { value: 0.5 },
+      // Capillary
+      uCapScale: { value: 40.0 },
+      uCapIntensity: { value: 0.35 },
+      uCapWindAlign: { value: 0.7 },
+      uCapDamping: { value: 0.98 },
+      uCapFreqs: { value: [0.15, 0.23, 0.31, 0.39] },
+      uCapAmps: { value: [0.006, 0.004, 0.003, 0.002] },
+      uCapSpeed: { value: 2.5 },
+      // Rain
+      uRainIntensity: { value: 0.0 },
+      uRainDropScale: { value: 1.0 },
+      uRainRippleIntensity: { value: 0.3 },
+      uRainRippleScale: { value: 15.0 },
+      // Foam Jacobian
+      uJacobianThreshold: { value: 0.4 },
+      // Fragment uniforms
       uSunDir: { value: new THREE.Vector3(0, 1, 0) },
-      uSunIntensity: { value: params.lighting.sunIntensity },
-      uSkyIntensity: { value: params.lighting.skyIntensity },
-      uAmbientIntensity: { value: params.lighting.ambientIntensity },
-      uAbsorptionR: { value: params.optics.absorptionR },
-      uAbsorptionG: { value: params.optics.absorptionG },
-      uAbsorptionB: { value: params.optics.absorptionB },
-      uScattering: { value: params.optics.scattering },
-      uTurbidity: { value: params.optics.turbidity },
-      uFresnelPower: { value: params.optics.fresnelPower },
-      uIOR: { value: params.optics.ior },
-      uFoamThreshold: { value: params.foam.threshold },
-      uFoamCoverage: { value: params.foam.coverage },
-      uFoamIntensity: { value: params.foam.intensity },
-      uShallowColor: { value: new THREE.Vector3(...params.depth.shallowColor) },
-      uDeepColor: { value: new THREE.Vector3(...params.depth.deepColor) },
-      uWaterDepth: { value: params.depth.waterDepth },
+      uSunIntensity: { value: 1.5 },
+      uSunColorTemp: { value: 5500 },
+      uSkyIntensity: { value: 0.5 },
+      uSkyTurbidity: { value: 2.0 },
+      uAmbientIntensity: { value: 0.15 },
+      uAmbientColor: { value: new THREE.Vector3(0.15, 0.18, 0.25) },
+      uSpecRoughness1: { value: 0.015 },
+      uSpecRoughness2: { value: 0.12 },
+      uBloomThreshold: { value: 0.8 },
+      uBloomIntensity: { value: 0.3 },
+      uGodRayIntensity: { value: 0.15 },
+      uMoonIntensity: { value: 0.0 },
+      uExposureBias: { value: 0.0 },
+      // Optics
+      uAbsorptionR: { value: 0.45 },
+      uAbsorptionG: { value: 0.029 },
+      uAbsorptionB: { value: 0.018 },
+      uScatterCoeff: { value: 0.2 },
+      uForwardScatter: { value: 0.7 },
+      uBackScatter: { value: 0.15 },
+      uTurbidity: { value: 0.1 },
+      uFresnelPower: { value: 5.0 },
+      uFresnelBias: { value: 0.02 },
+      uIOR: { value: 1.333 },
+      uSSSIntensity: { value: 0.3 },
+      uSSSDistortion: { value: 0.3 },
+      uSSSPower: { value: 4.0 },
+      uSSSColor: { value: new THREE.Vector3(0.05, 0.65, 0.5) },
+      uSpecRoughness: { value: 0.03 },
+      uSpecIntensity: { value: 1.2 },
+      // Depth
+      uWaterDepth: { value: 50 },
+      uShallowColor: { value: new THREE.Vector3(0.1, 0.6, 0.6) },
+      uDeepColor: { value: new THREE.Vector3(0, 0.08, 0.25) },
+      uVisibility: { value: 30 },
+      uExtinction: { value: new THREE.Vector3(0.4, 0.04, 0.02) },
+      uGradientPower: { value: 0.5 },
+      uDepthDarkening: { value: 0.3 },
+      uDepthFog: { value: 0.1 },
+      uColorGradientBias: { value: 0.5 },
+      // Foam
+      uFoamThreshold: { value: 0.5 },
+      uFoamCoverage: { value: 0.35 },
+      uFoamIntensity: { value: 0.9 },
+      uFoamColor: { value: new THREE.Vector3(0.88, 0.92, 0.95) },
+      uFoamNoiseScale: { value: 1.5 },
+      uFoamNoiseSpeed: { value: 0.3 },
+      uFoamRoughness: { value: 0.6 },
+      uFoamEdge: { value: 0.3 },
+      uWhitecapThreshold: { value: 0.7 },
+      uWhitecapIntensity: { value: 1.0 },
+      uBubbleDensity: { value: 0.4 },
+      // Atmosphere
+      uFogDensity: { value: 0.007 },
+      uFogColor: { value: new THREE.Vector3(0.035, 0.05, 0.09) },
+      uHazeIntensity: { value: 0.2 },
+      uHorizonBlend: { value: 0.3 },
+      uRayleighCoeff: { value: 1.0 },
+      uMieCoeff: { value: 0.005 },
+      uMieDirectional: { value: 0.8 },
+      uSkyColor: { value: new THREE.Vector3(0.08, 0.18, 0.45) },
+      uHorizonColor: { value: new THREE.Vector3(0.55, 0.65, 0.78) },
+      uCloudCover: { value: 0.0 },
+      // Surface
+      uNormalStrength: { value: 1.0 },
+      uReflectionDistortion: { value: 0.1 },
+      uWetness: { value: 0.8 },
+      uRoughnessVariation: { value: 0.2 },
+      // Caustics
+      uCausticsEnabled: { value: 1.0 },
+      uCausticsIntensity: { value: 0.5 },
+      uCausticsScale: { value: 8.0 },
+      uCausticsSpeed: { value: 0.8 },
+      uCausticsChromaticSplit: { value: 0.02 },
+      uCausticsComplexity: { value: 2.0 },
+      uCausticsDepthAtten: { value: 0.5 },
+      // Post
+      uExposure: { value: 1.0 },
+      uContrast: { value: 1.0 },
+      uSaturation: { value: 1.0 },
+      uVignetteIntensity: { value: 0.0 },
+      uVignetteRadius: { value: 0.8 },
+      uGamma: { value: 2.2 },
+      uColorTint: { value: new THREE.Vector3(1, 1, 1) },
+      uFilmGrain: { value: 0.0 },
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
 
   useFrame(({ clock }) => {
     if (!meshRef.current) return;
     const u = (meshRef.current.material as THREE.ShaderMaterial).uniforms;
-    u.uTime.value = clock.getElapsedTime();
-    u.uAmplitude.value = params.waves.amplitude;
-    u.uFrequency.value = params.waves.frequency;
-    u.uSteepness.value = params.waves.steepness;
-    u.uSpeed.value = params.waves.speed;
-    u.uDirection.value = params.waves.direction;
-    u.uCapillaryScale.value = params.capillary.scale;
-    u.uCapillaryIntensity.value = params.capillary.intensity;
-    u.uWindDir.value = params.wind.direction;
-    u.uWindSpeed.value = params.wind.speed;
-    const az = (params.lighting.sunAzimuth * Math.PI) / 180;
-    const el = (params.lighting.sunElevation * Math.PI) / 180;
+    const p = params;
+
+    u.uTime.value = clock.getElapsedTime() * p.animation.timeScale;
+
+    // Wave groups
+    const wg = getWaveGroupArrays(p);
+    u.uWGEnabled.value = wg.enabled;
+    u.uWGAmp.value = wg.amp;
+    u.uWGFreq.value = wg.freq;
+    u.uWGSteep.value = wg.steep;
+    u.uWGDir.value = wg.dir;
+    u.uWGSpeed.value = wg.speed.map((s) => s * p.animation.globalSpeed);
+    u.uWGSpread.value = wg.spread;
+    u.uWGPhase.value = wg.phase;
+    u.uWGNumWaves.value = wg.numWaves;
+    u.uWGFreqSpread.value = wg.freqSpread;
+    u.uWGAmpDecay.value = wg.ampDecay;
+
+    // Global
+    u.uChoppiness.value = p.globalWave.choppiness;
+    u.uGlobalAmp.value = p.globalWave.globalAmplitude;
+    u.uPeakSharp.value = p.globalWave.peakSharpening;
+    u.uNonlinearity.value = p.globalWave.nonlinearity;
+
+    // Wind
+    u.uWindSpeed.value = p.wind.speed;
+    u.uWindDir.value = p.wind.direction;
+    u.uGustIntensity.value = p.wind.gustIntensity;
+    u.uGustFreq.value = p.wind.gustFrequency;
+    u.uTurbulence.value = p.wind.turbulence;
+
+    // FBM
+    u.uFBMOctaves.value = p.detail.fbmOctaves;
+    u.uFBMAmp.value = p.detail.fbmAmplitude;
+    u.uFBMFreq.value = p.detail.fbmFrequency;
+    u.uFBMLacunarity.value = p.detail.fbmLacunarity;
+    u.uFBMGain.value = p.detail.fbmGain;
+    u.uDomainWarp.value = p.detail.domainWarp;
+    u.uWarpStrength.value = p.detail.warpStrength;
+    u.uWarpFreq.value = p.detail.warpFrequency;
+
+    // Capillary
+    u.uCapScale.value = p.capillary.scale;
+    u.uCapIntensity.value = p.capillary.intensity;
+    u.uCapWindAlign.value = p.capillary.windAlignment;
+    u.uCapDamping.value = p.capillary.damping;
+    u.uCapFreqs.value = [p.capillary.frequency1, p.capillary.frequency2, p.capillary.frequency3, p.capillary.frequency4];
+    u.uCapAmps.value = [p.capillary.amplitude1, p.capillary.amplitude2, p.capillary.amplitude3, p.capillary.amplitude4];
+    u.uCapSpeed.value = p.capillary.speedMult;
+
+    // Rain
+    u.uRainIntensity.value = p.rain.intensity;
+    u.uRainDropScale.value = p.rain.dropScale;
+    u.uRainRippleIntensity.value = p.rain.rippleIntensity;
+    u.uRainRippleScale.value = p.rain.rippleScale;
+
+    // Foam
+    u.uJacobianThreshold.value = p.foam.jacobianThreshold;
+    u.uFoamThreshold.value = p.foam.threshold;
+    u.uFoamCoverage.value = p.foam.coverage;
+    u.uFoamIntensity.value = p.foam.intensity;
+    u.uFoamColor.value.set(p.foam.colorR, p.foam.colorG, p.foam.colorB);
+    u.uFoamNoiseScale.value = p.foam.noiseScale;
+    u.uFoamNoiseSpeed.value = p.foam.noiseSpeed;
+    u.uFoamRoughness.value = p.foam.roughness;
+    u.uFoamEdge.value = p.foam.edgeFoam;
+    u.uWhitecapThreshold.value = p.foam.whitecapThreshold;
+    u.uWhitecapIntensity.value = p.foam.whitecapIntensity;
+    u.uBubbleDensity.value = p.foam.bubbleDensity;
+
+    // Lighting
+    const az = (p.lighting.sunAzimuth * Math.PI) / 180;
+    const el = (p.lighting.sunElevation * Math.PI) / 180;
     u.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
-    u.uSunIntensity.value = params.lighting.sunIntensity;
-    u.uSkyIntensity.value = params.lighting.skyIntensity;
-    u.uAmbientIntensity.value = params.lighting.ambientIntensity;
-    u.uAbsorptionR.value = params.optics.absorptionR;
-    u.uAbsorptionG.value = params.optics.absorptionG;
-    u.uAbsorptionB.value = params.optics.absorptionB;
-    u.uScattering.value = params.optics.scattering;
-    u.uTurbidity.value = params.optics.turbidity;
-    u.uFresnelPower.value = params.optics.fresnelPower;
-    u.uIOR.value = params.optics.ior;
-    u.uFoamThreshold.value = params.foam.threshold;
-    u.uFoamCoverage.value = params.foam.coverage;
-    u.uFoamIntensity.value = params.foam.intensity;
-    u.uShallowColor.value.set(...params.depth.shallowColor);
-    u.uDeepColor.value.set(...params.depth.deepColor);
-    u.uWaterDepth.value = params.depth.waterDepth;
+    u.uSunIntensity.value = p.lighting.sunIntensity;
+    u.uSunColorTemp.value = p.lighting.sunColorTemp;
+    u.uSkyIntensity.value = p.lighting.skyIntensity;
+    u.uSkyTurbidity.value = p.lighting.skyTurbidity;
+    u.uAmbientIntensity.value = p.lighting.ambientIntensity;
+    u.uAmbientColor.value.set(p.lighting.ambientColorR, p.lighting.ambientColorG, p.lighting.ambientColorB);
+    u.uSpecRoughness1.value = p.lighting.specRoughness1;
+    u.uSpecRoughness2.value = p.lighting.specRoughness2;
+    u.uBloomThreshold.value = p.lighting.bloomThreshold;
+    u.uBloomIntensity.value = p.lighting.bloomIntensity;
+    u.uGodRayIntensity.value = p.lighting.godRayIntensity;
+    u.uMoonIntensity.value = p.lighting.moonIntensity;
+    u.uExposureBias.value = p.lighting.exposureBias;
+
+    // Optics
+    u.uAbsorptionR.value = p.optics.absorptionR;
+    u.uAbsorptionG.value = p.optics.absorptionG;
+    u.uAbsorptionB.value = p.optics.absorptionB;
+    u.uScatterCoeff.value = p.optics.scatteringCoeff;
+    u.uForwardScatter.value = p.optics.forwardScatter;
+    u.uBackScatter.value = p.optics.backScatter;
+    u.uTurbidity.value = p.optics.turbidity;
+    u.uFresnelPower.value = p.optics.fresnelPower;
+    u.uFresnelBias.value = p.optics.fresnelBias;
+    u.uIOR.value = p.optics.ior;
+    u.uSSSIntensity.value = p.optics.sssIntensity;
+    u.uSSSDistortion.value = p.optics.sssDistortion;
+    u.uSSSPower.value = p.optics.sssPower;
+    u.uSSSColor.value.set(p.optics.sssColorR, p.optics.sssColorG, p.optics.sssColorB);
+    u.uSpecRoughness.value = p.optics.specRoughness;
+    u.uSpecIntensity.value = p.optics.specIntensity;
+
+    // Depth
+    u.uWaterDepth.value = p.depth.waterDepth;
+    u.uShallowColor.value.set(p.depth.shallowColorR, p.depth.shallowColorG, p.depth.shallowColorB);
+    u.uDeepColor.value.set(p.depth.deepColorR, p.depth.deepColorG, p.depth.deepColorB);
+    u.uVisibility.value = p.depth.visibility;
+    u.uExtinction.value.set(p.depth.extinctionR, p.depth.extinctionG, p.depth.extinctionB);
+    u.uGradientPower.value = p.depth.gradientPower;
+    u.uDepthDarkening.value = p.depth.depthDarkening;
+    u.uDepthFog.value = p.depth.depthFog;
+    u.uColorGradientBias.value = p.depth.colorGradientBias;
+
+    // Atmosphere
+    u.uFogDensity.value = p.atmosphere.fogDensity;
+    u.uFogColor.value.set(p.atmosphere.fogColorR, p.atmosphere.fogColorG, p.atmosphere.fogColorB);
+    u.uHazeIntensity.value = p.atmosphere.hazeIntensity;
+    u.uHorizonBlend.value = p.atmosphere.horizonBlend;
+    u.uRayleighCoeff.value = p.atmosphere.rayleighCoeff;
+    u.uMieCoeff.value = p.atmosphere.mieCoeff;
+    u.uMieDirectional.value = p.atmosphere.mieDirectional;
+    u.uSkyColor.value.set(p.atmosphere.skyColorR, p.atmosphere.skyColorG, p.atmosphere.skyColorB);
+    u.uHorizonColor.value.set(p.atmosphere.horizonColorR, p.atmosphere.horizonColorG, p.atmosphere.horizonColorB);
+    u.uCloudCover.value = p.atmosphere.cloudCover;
+
+    // Surface
+    u.uNormalStrength.value = p.surface.normalMapStrength;
+    u.uReflectionDistortion.value = p.surface.reflectionDistortion;
+    u.uWetness.value = p.surface.wetness;
+    u.uRoughnessVariation.value = p.surface.roughnessVariation;
+
+    // Caustics
+    u.uCausticsEnabled.value = p.caustics.enabled;
+    u.uCausticsIntensity.value = p.caustics.intensity;
+    u.uCausticsScale.value = p.caustics.scale;
+    u.uCausticsSpeed.value = p.caustics.speed;
+    u.uCausticsChromaticSplit.value = p.caustics.chromaticSplit;
+    u.uCausticsComplexity.value = p.caustics.complexity;
+    u.uCausticsDepthAtten.value = p.caustics.depthAttenuation;
+
+    // Post
+    u.uExposure.value = p.post.exposure;
+    u.uContrast.value = p.post.contrast;
+    u.uSaturation.value = p.post.saturation;
+    u.uVignetteIntensity.value = p.post.vignetteIntensity;
+    u.uVignetteRadius.value = p.post.vignetteRadius;
+    u.uGamma.value = p.post.gamma;
+    u.uColorTint.value.set(p.post.colorTintR, p.post.colorTintG, p.post.colorTintB);
+    u.uFilmGrain.value = p.post.filmGrain;
   });
 
   return (
     <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[150, 150, 256, 256]} />
+      <planeGeometry args={[200, 200, 300, 300]} />
       <shaderMaterial
-        vertexShader={vertexShader}
-        fragmentShader={fragmentShader}
+        vertexShader={oceanVertexShader}
+        fragmentShader={oceanFragmentShader}
         uniforms={uniforms}
         side={THREE.FrontSide}
       />

@@ -157,7 +157,6 @@ float cellNoise(vec2 uv) {
   return d2 - d1;
 }
 
-#define TAU 6.28318530718
 
 // ——— Color temperature to RGB (approximate) ———
 vec3 colorTemp(float temp) {

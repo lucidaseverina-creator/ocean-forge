@@ -200,8 +200,8 @@ void main() {
       float phase = dot(dir, xz) * k - omega * uTime * groupSpeed + phaseOff + randPhase;
       
       // Steepness (Q factor) — prevent looping
-      float Q = groupSteep * uChoppiness / (k * a * float(max(totalWaveCount, 1)) * 0.15 + 0.001);
-      Q = min(Q, 1.0);
+      float Q = groupSteep * uChoppiness / (k * a + 0.001);
+      Q = min(Q, 0.8);
       
       float sinP = sin(phase);
       float cosP = cos(phase);

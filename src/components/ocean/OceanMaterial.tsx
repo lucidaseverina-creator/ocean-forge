@@ -330,12 +330,12 @@ export function OceanMesh({ params }: OceanMeshProps) {
 
   return (
     <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[200, 200, 200, 200]} />
+      <planeGeometry args={[300, 300, 256, 256]} />
       <shaderMaterial
         vertexShader={oceanVertexShader}
         fragmentShader={oceanFragmentShader}
         uniforms={uniforms}
-        side={THREE.FrontSide}
+        side={THREE.DoubleSide}
       />
     </mesh>
   );

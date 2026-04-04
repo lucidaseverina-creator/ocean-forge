@@ -67,6 +67,7 @@ varying vec2 vUV;
 
 #define PI 3.14159265359
 #define TAU 6.28318530718
+#define G 9.81
 
 // ——— Hash functions ———
 float hash11(float p) {
@@ -88,10 +89,10 @@ vec2 hash22(vec2 p) {
   return fract((p3.xx + p3.yz) * p3.zy);
 }
 
-// ——— Simplex-like noise for FBM ———
-vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-vec3 permute(vec3 x) { return mod289(((x * 34.0) + 10.0) * x); }
+// ——— Simplex noise ———
+vec3 mod289v3(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec2 mod289v2(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec3 permute(vec3 x) { return mod289v3(((x * 34.0) + 10.0) * x); }
 
 float snoise(vec2 v) {
   const vec4 C = vec4(0.211324865405187, 0.366025403784439,
@@ -101,7 +102,7 @@ float snoise(vec2 v) {
   vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
   vec4 x12 = x0.xyxy + C.xxzz;
   x12.xy -= i1;
-  i = mod289(i);
+  i = mod289v2(i);
   vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));
   vec3 m = max(0.5 - vec3(dot(x0, x0), dot(x12.xy, x12.xy), dot(x12.zw, x12.zw)), 0.0);
   m = m * m; m = m * m;
@@ -122,37 +123,49 @@ float fbm(vec2 p, float octaves) {
   float amp = uFBMAmp;
   float freq = uFBMFreq;
   
-  // Domain warp
   if (uDomainWarp > 0.01) {
     vec2 warp = vec2(
-      snoise(p * uWarpFreq + uTime * 0.05),
-      snoise(p * uWarpFreq + vec2(5.2, 1.3) + uTime * 0.05)
+      snoise(p * uWarpFreq + uTime * 0.03),
+      snoise(p * uWarpFreq + vec2(5.2, 1.3) + uTime * 0.03)
     );
     p += warp * uWarpStrength * uDomainWarp;
   }
   
   for (float i = 0.0; i < 8.0; i++) {
     if (i >= octaves) break;
-    value += amp * snoise(p * freq + uTime * 0.1 * (i + 1.0));
+    value += amp * snoise(p * freq + uTime * 0.05 * (i + 1.0));
     freq *= uFBMLacunarity;
     amp *= uFBMGain;
   }
   return value;
 }
 
+// ——— Gerstner wave with proper physics ———
+// Returns: xyz = displacement, w = unused
+// Also accumulates tangent/bitangent via out params
+struct WaveResult {
+  vec3 disp;
+  float jacobian;
+  float steepness;
+};
+
 void main() {
   vec3 pos = position;
   vec2 xz = pos.xy; // PlaneGeometry XY, rotated -PI/2 around X
-  vUV = xz / 150.0 + 0.5;
+  vUV = xz / 200.0 + 0.5;
 
   float windRad = uWindDir * PI / 180.0;
 
-  // Gust modulation
-  float gustMod = 1.0 + uGustIntensity * sin(uTime * uGustFreq * TAU) * 0.5;
+  // Gust modulation — slow, natural variation
+  float gustMod = 1.0 + uGustIntensity * 0.5 * (
+    sin(uTime * uGustFreq * 0.7) * 0.6 +
+    sin(uTime * uGustFreq * 1.3 + 2.1) * 0.4
+  );
 
   vec3 totalDisp = vec3(0.0);
-  vec3 T = vec3(1.0, 0.0, 0.0);
-  vec3 B = vec3(0.0, 0.0, 1.0);
+  // Analytical normal via tangent/bitangent
+  vec3 T = vec3(1.0, 0.0, 0.0); // dP/dx
+  vec3 B = vec3(0.0, 0.0, 1.0); // dP/dz
   float maxH = 0.001;
   float jacobianAccum = 0.0;
   float steepnessAccum = 0.0;
@@ -173,51 +186,63 @@ void main() {
     float freqSpread = uWGFreqSpread[g];
     float ampDecay = uWGAmpDecay[g];
     
-    // Wind coupling for wind-sea and chop groups (g >= 2)
+    // Wind coupling for wind-sea and chop groups
     float windCoupling = (g >= 2) ? gustMod : 1.0;
     
     for (int w = 0; w < 8; w++) {
       if (w >= nWaves) break;
       totalWaveCount++;
       
-      // Pseudo-random direction offset within spread
-      float seed = float(g) * 13.37 + float(w) * 7.13;
+      // Deterministic pseudo-random per wave
+      float seed = float(g) * 17.31 + float(w) * 7.919;
       float randAngle = (hash11(seed) - 0.5) * 2.0 * spreadAngle;
-      float randPhase = hash11(seed + 100.0) * TAU;
+      float randPhase = hash11(seed + 137.0) * TAU;
+      float randAmpVar = 0.7 + 0.6 * hash11(seed + 251.0); // amplitude variation
       
       float angle = groupDir + randAngle;
       vec2 dir = vec2(cos(angle), sin(angle));
       
-      // Frequency cascade
-      float f = groupFreq * pow(freqSpread, float(w));
-      float a = groupAmp * pow(ampDecay, float(w)) * windCoupling;
+      // Frequency cascade with slight randomization
+      float fMul = pow(freqSpread, float(w));
+      float f = groupFreq * fMul * (0.9 + 0.2 * hash11(seed + 400.0));
+      float a = groupAmp * pow(ampDecay, float(w)) * windCoupling * randAmpVar;
       
-      // Apply peak sharpening (sharpen primary waves, soften higher freq)
-      a *= mix(1.0, pow(ampDecay, float(w) * 0.5), uPeakSharp - 1.0);
+      // Peak sharpening: emphasize dominant waves
+      float peakFactor = exp(-0.5 * pow(float(w) / max(float(nWaves) * 0.3, 1.0), 2.0) * (uPeakSharp - 1.0));
+      a *= mix(1.0, peakFactor, clamp(uPeakSharp - 1.0, 0.0, 1.0));
       
+      // Wavenumber and deep-water dispersion
       float k = TAU * f;
-      float omega = sqrt(9.81 * k); // Deep-water dispersion
+      float omega = sqrt(G * k);
       float phase = dot(dir, xz) * k - omega * uTime * groupSpeed + phaseOff + randPhase;
       
-      // Steepness (Q factor) — prevent looping
-      float Q = groupSteep * uChoppiness / (k * a * float(nWaves) + 0.001);
-      Q = clamp(Q, 0.0, 0.35);
+      // Steepness Q factor — THE critical constraint
+      // Q = steepness / (k * A * N) — must stay well under 1/N to prevent looping
+      float Q = groupSteep * uChoppiness;
+      // Normalize by total contribution to prevent looping
+      Q = Q / (k * a * float(nWaves) + 0.001);
+      // Hard clamp — never allow Q that would cause surface folding
+      Q = clamp(Q, 0.0, 1.0 / (float(nWaves) + 0.001));
+      Q = min(Q, 0.28); // absolute safety cap
       
       float sinP = sin(phase);
       float cosP = cos(phase);
       
-      // Nonlinearity: sharpen crests, flatten troughs
-      float nl = uNonlinearity;
+      // Nonlinearity: sharpen crests, flatten troughs (Stokes-like)
       float heightVal = a * sinP;
+      float nl = uNonlinearity;
       if (nl > 0.01) {
-        heightVal = a * (sinP + nl * sinP * abs(sinP));
+        // Second-order Stokes correction
+        float stokes2 = 0.5 * k * a * sinP * sinP;
+        heightVal = a * sinP + nl * a * stokes2;
       }
       
-      totalDisp.x += Q * a * dir.x * cosP;
+      // Gerstner horizontal displacement
+      totalDisp.x -= Q * a * dir.x * cosP;
       totalDisp.y += heightVal;
-      totalDisp.z += Q * a * dir.y * cosP;
+      totalDisp.z -= Q * a * dir.y * cosP;
       
-      // Tangent/Bitangent accumulation for normals
+      // Analytical tangent/bitangent for normal computation
       float WA = k * a;
       T.x -= Q * dir.x * dir.x * WA * sinP;
       T.y += dir.x * WA * cosP;
@@ -227,35 +252,41 @@ void main() {
       B.y += dir.y * WA * cosP;
       B.z -= Q * dir.y * dir.y * WA * sinP;
       
-      // Jacobian determinant components for foam
-      jacobianAccum += Q * dir.x * dir.x * WA * sinP;
-      jacobianAccum += Q * dir.y * dir.y * WA * sinP;
-      steepnessAccum += WA * abs(cosP);
+      // Jacobian for foam detection
+      float Jxx = 1.0 - Q * dir.x * dir.x * WA * sinP;
+      float Jzz = 1.0 - Q * dir.y * dir.y * WA * sinP;
+      float Jxz = -Q * dir.x * dir.y * WA * sinP;
+      float J = Jxx * Jzz - Jxz * Jxz;
+      jacobianAccum += (1.0 - J); // foam where J < 1
       
+      steepnessAccum += WA * abs(cosP);
       maxH += a;
     }
   }
 
-  // ═══ FBM noise displacement ═══
-  float fbmDisp = fbm(xz * 0.02 + totalDisp.xz * 0.05, uFBMOctaves);
-  totalDisp.y += fbmDisp;
+  // ═══ FBM noise — adds organic randomness ═══
+  float fbmVal = fbm(xz * 0.015 + totalDisp.xz * 0.02, uFBMOctaves);
+  totalDisp.y += fbmVal;
   
-  // Perturb tangent/bitangent with FBM gradient (finite differences)
-  float eps = 0.5;
-  float fbmDx = fbm((xz + vec2(eps, 0.0)) * 0.02, uFBMOctaves) - fbm((xz - vec2(eps, 0.0)) * 0.02, uFBMOctaves);
-  float fbmDz = fbm((xz + vec2(0.0, eps)) * 0.02, uFBMOctaves) - fbm((xz - vec2(0.0, eps)) * 0.02, uFBMOctaves);
+  // FBM gradient for normal perturbation
+  float eps = 0.8;
+  float fbmDx = fbm((xz + vec2(eps, 0.0)) * 0.015, max(uFBMOctaves - 1.0, 1.0))
+              - fbm((xz - vec2(eps, 0.0)) * 0.015, max(uFBMOctaves - 1.0, 1.0));
+  float fbmDz = fbm((xz + vec2(0.0, eps)) * 0.015, max(uFBMOctaves - 1.0, 1.0))
+              - fbm((xz - vec2(0.0, eps)) * 0.015, max(uFBMOctaves - 1.0, 1.0));
   T.y += fbmDx / (2.0 * eps);
   B.y += fbmDz / (2.0 * eps);
 
   // ═══ Capillary micro-ripples ═══
   for (int i = 0; i < 4; i++) {
-    float capAngle = windRad + float(i) * PI * 0.5 * uCapWindAlign + hash11(float(i) * 3.7) * PI * (1.0 - uCapWindAlign);
+    float capAngle = windRad + float(i) * PI * 0.25 * (1.0 + uCapWindAlign)
+                   + hash11(float(i) * 5.7 + 3.1) * PI * (1.0 - uCapWindAlign);
     vec2 dir = vec2(cos(capAngle), sin(capAngle));
     float f = uCapScale * uCapFreqs[i];
     float a = uCapIntensity * uCapAmps[i] * pow(uCapDamping, float(i));
     float k = TAU * f;
-    float omega = sqrt(9.81 * k);
-    float phase = dot(dir, xz + totalDisp.xz * 0.1) * k - omega * uTime * uCapSpeed;
+    float omega = sqrt(G * k + 0.074 / 1000.0 * k * k * k); // capillary-gravity dispersion
+    float phase = dot(dir, xz + totalDisp.xz * 0.05) * k - omega * uTime * uCapSpeed;
     float sinP = sin(phase);
     float cosP = cos(phase);
     
@@ -267,35 +298,43 @@ void main() {
 
   // ═══ Rain ripples ═══
   if (uRainIntensity > 0.01) {
-    for (int i = 0; i < 6; i++) {
-      vec2 center = hash22(vec2(float(i) * 1.7, floor(uTime * uRainDropScale + float(i) * 0.3))) * 150.0 - 75.0;
+    for (int i = 0; i < 8; i++) {
+      float timeSlot = floor(uTime * 2.0 + float(i) * 0.37);
+      vec2 center = hash22(vec2(float(i) * 1.7 + 0.3, timeSlot)) * 160.0 - 80.0;
       float dist = length(xz - center);
-      float rippleTime = fract(uTime * uRainDropScale * 0.5 + hash11(float(i) * 2.3));
-      float radius = rippleTime * uRainRippleScale;
-      float ringWidth = 2.0;
-      float ring = exp(-pow(dist - radius, 2.0) / ringWidth) * (1.0 - rippleTime);
-      totalDisp.y += ring * uRainRippleIntensity * uRainIntensity * 0.05;
+      float rippleAge = fract(uTime * 2.0 + float(i) * 0.37);
+      float radius = rippleAge * uRainRippleScale;
+      float ringWidth = 1.5 + rippleAge * 2.0;
+      float ring = exp(-pow(dist - radius, 2.0) / ringWidth) * (1.0 - rippleAge);
+      ring *= exp(-dist * 0.05); // distance attenuation
+      totalDisp.y += ring * uRainRippleIntensity * uRainIntensity * 0.03;
     }
   }
 
-  // ═══ Apply displacement to local-space coords ═══
+  // ═══ Apply displacement ═══
+  // PlaneGeometry is in XY, rotated -PI/2 around X to become XZ
+  // So: local X = world X, local Y = world Z, local Z = -world Y
   pos.x += totalDisp.x;
   pos.y += totalDisp.z;
   pos.z -= totalDisp.y;
 
-  // ═══ Compute normal ═══
+  // ═══ Compute normal from cross(B, T) ═══
   vec3 waveN = normalize(cross(B, T));
-  waveN = faceforward(waveN, vec3(0.0, -1.0, 0.0), waveN);
+  // Ensure normal faces upward (in wave space Y = up)
+  if (waveN.y < 0.0) waveN = -waveN;
+  // Transform from wave space (X, Y-up, Z) to local space (X, Y, -Z)
   vec3 localN = vec3(waveN.x, waveN.z, -waveN.y);
   vNormal = normalize((modelMatrix * vec4(localN, 0.0)).xyz);
   vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
   vHeight = totalDisp.y;
 
-  // ═══ Foam factor from Jacobian + height + slope ═══
+  // ═══ Foam from Jacobian + height + steepness ═══
   float heightRatio = totalDisp.y / (maxH + 0.001);
   float slopeMag = length(vec2(T.y, B.y));
-  float jacobianFoam = smoothstep(uJacobianThreshold, uJacobianThreshold + 0.3, jacobianAccum * 0.5);
-  vFoamFactor = smoothstep(0.25, 0.8, heightRatio) * 0.6 + slopeMag * 0.3 + jacobianFoam * 0.5;
+  float jacobianFoam = smoothstep(uJacobianThreshold, uJacobianThreshold + 0.4, jacobianAccum);
+  float crestFoam = smoothstep(0.4, 0.9, heightRatio) * 0.4;
+  float slopeFoam = smoothstep(0.3, 1.5, slopeMag) * 0.3;
+  vFoamFactor = crestFoam + slopeFoam + jacobianFoam * 0.6;
   vJacobian = jacobianAccum;
   vSteepness = steepnessAccum / float(max(totalWaveCount, 1));
 

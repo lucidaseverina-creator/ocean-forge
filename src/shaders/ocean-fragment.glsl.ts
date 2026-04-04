@@ -107,6 +107,7 @@ varying float vSteepness;
 varying vec2 vUV;
 
 #define PI 3.14159265359
+#define TAU 6.28318530718
 
 // ——— Hash ———
 float hash21(vec2 p) {
@@ -156,7 +157,6 @@ float cellNoise(vec2 uv) {
   return d2 - d1;
 }
 
-#define TAU 6.28318530718
 
 // ——— Color temperature to RGB (approximate) ———
 vec3 colorTemp(float temp) {

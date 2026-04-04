@@ -107,6 +107,7 @@ varying float vSteepness;
 varying vec2 vUV;
 
 #define PI 3.14159265359
+#define TAU 6.28318530718
 
 // ——— Hash ———
 float hash21(vec2 p) {

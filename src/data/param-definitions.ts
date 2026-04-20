@@ -20,10 +20,14 @@ export interface SectionDef {
 }
 
 export const sections: SectionDef[] = [
-  { id: "primarySwell", title: "Primary Swell", icon: "Waves", badge: "Group 1", defaultOpen: true },
-  { id: "secondarySwell", title: "Secondary Swell", icon: "Waves", badge: "Group 2" },
-  { id: "windSea", title: "Wind Sea", icon: "Wind", badge: "Group 3" },
-  { id: "chop", title: "Zap", icon: "Zap", badge: "Group 4" },
+  { id: "longSwell", title: "Long Swell", icon: "Waves", badge: "G1 Far Storm", defaultOpen: true },
+  { id: "primarySwell", title: "Primary Swell", icon: "Waves", badge: "G2 Dominant" },
+  { id: "secondarySwell", title: "Secondary Swell", icon: "Waves", badge: "G3 Cross" },
+  { id: "crossSwell", title: "Cross Swell", icon: "Waves", badge: "G4 Reflect" },
+  { id: "windSea", title: "Wind Sea", icon: "Wind", badge: "G5 Local" },
+  { id: "chop", title: "Chop", icon: "Zap", badge: "G6 Short" },
+  { id: "ripple", title: "Ripple", icon: "Sparkles", badge: "G7 Cap-Grav" },
+  { id: "microChop", title: "Micro Chop", icon: "Sparkles", badge: "G8 Surface" },
   { id: "globalWave", title: "Global Wave", icon: "Activity", badge: "Master" },
   { id: "wind", title: "Wind Forcing", icon: "Wind", badge: "Environment" },
   { id: "foam", title: "Foam & Whitecaps", icon: "Droplets", badge: "Multiphase" },
@@ -54,15 +58,41 @@ function waveGroupParams(prefix: string): ParamDef[] {
     { section: prefix, key: `${prefix}.numWaves`, label: "Sub-Waves", min: 1, max: 8, step: 1 },
     { section: prefix, key: `${prefix}.frequencySpread`, label: "Freq Spread", min: 1.0, max: 3.0, step: 0.05 },
     { section: prefix, key: `${prefix}.amplitudeDecay`, label: "Amp Decay", min: 0.1, max: 1.0, step: 0.01 },
+    // ── Spectrum & Shape ──
+    { section: prefix, key: `${prefix}.spectrumMode`, label: "Spectrum (0-7)", min: 0, max: 7, step: 1 },
+    { section: prefix, key: `${prefix}.peakEnhancement`, label: "JONSWAP γ", min: 1, max: 7, step: 0.1 },
+    { section: prefix, key: `${prefix}.spectralWidth`, label: "Spectral σ", min: 0.01, max: 0.5, step: 0.01 },
+    { section: prefix, key: `${prefix}.fetchKm`, label: "Fetch", min: 1, max: 2000, step: 5, unit: "km" },
+    { section: prefix, key: `${prefix}.frontSteepness`, label: "Front Steep", min: 0, max: 2.5, step: 0.05 },
+    { section: prefix, key: `${prefix}.rearSteepness`, label: "Rear Steep", min: 0, max: 2.5, step: 0.05 },
+    { section: prefix, key: `${prefix}.crestSharpness`, label: "Crest Sharp", min: 0.3, max: 4, step: 0.05 },
+    { section: prefix, key: `${prefix}.troughFlatness`, label: "Trough Flat", min: 0, max: 1, step: 0.01 },
+    { section: prefix, key: `${prefix}.asymmetry`, label: "Asymmetry", min: -1, max: 1, step: 0.02 },
+    { section: prefix, key: `${prefix}.directionalExponent`, label: "Dir Exp (cos^N)", min: 0.5, max: 32, step: 0.5 },
+    { section: prefix, key: `${prefix}.frequencyJitter`, label: "Freq Jitter", min: 0, max: 1, step: 0.01 },
+    { section: prefix, key: `${prefix}.amplitudeJitter`, label: "Amp Jitter", min: 0, max: 1, step: 0.01 },
+    { section: prefix, key: `${prefix}.directionJitter`, label: "Dir Jitter", min: 0, max: 1, step: 0.01 },
+    { section: prefix, key: `${prefix}.phaseJitter`, label: "Phase Jitter", min: 0, max: 1, step: 0.01 },
+    { section: prefix, key: `${prefix}.spatialJitter`, label: "Anti-Grid Warp", min: 0, max: 1, step: 0.01 },
+    { section: prefix, key: `${prefix}.spatialJitterScale`, label: "Warp Scale", min: 0.005, max: 0.3, step: 0.005 },
+    { section: prefix, key: `${prefix}.waveAge`, label: "Wave Age", min: 0, max: 1, step: 0.01 },
+    { section: prefix, key: `${prefix}.groupSpeedMod`, label: "Disp Modifier", min: 0.1, max: 3, step: 0.05 },
+    { section: prefix, key: `${prefix}.obliquity`, label: "Obliquity", min: -1, max: 1, step: 0.02 },
+    { section: prefix, key: `${prefix}.wavelengthMin`, label: "λ Min", min: 0, max: 200, step: 0.5, unit: "m" },
+    { section: prefix, key: `${prefix}.wavelengthMax`, label: "λ Max", min: 0, max: 500, step: 1, unit: "m" },
   ];
 }
 
 export const paramDefs: ParamDef[] = [
   // ═══ Wave Groups ═══
+  ...waveGroupParams("longSwell"),
   ...waveGroupParams("primarySwell"),
   ...waveGroupParams("secondarySwell"),
+  ...waveGroupParams("crossSwell"),
   ...waveGroupParams("windSea"),
   ...waveGroupParams("chop"),
+  ...waveGroupParams("ripple"),
+  ...waveGroupParams("microChop"),
 
   // ═══ Global Wave ═══
   { section: "globalWave", key: "globalWave.choppiness", label: "Choppiness", min: 0, max: 2, step: 0.01 },
@@ -73,6 +103,12 @@ export const paramDefs: ParamDef[] = [
   { section: "globalWave", key: "globalWave.directionalSpread", label: "Dir Spread", min: 0, max: 3, step: 0.05 },
   { section: "globalWave", key: "globalWave.breakingThreshold", label: "Breaking Thr", min: 0, max: 2, step: 0.01 },
   { section: "globalWave", key: "globalWave.waveEvolution", label: "Evolution", min: 0, max: 1, step: 0.01 },
+  { section: "globalWave", key: "globalWave.antiGridJitter", label: "Anti-Grid Warp", min: 0, max: 2, step: 0.01 },
+  { section: "globalWave", key: "globalWave.antiGridScale", label: "Anti-Grid Scale", min: 0.005, max: 0.2, step: 0.005 },
+  { section: "globalWave", key: "globalWave.spectrumBlend", label: "Spectrum Blend", min: 0, max: 1, step: 0.01 },
+  { section: "globalWave", key: "globalWave.stokes3Order", label: "Stokes 3rd", min: 0, max: 0.3, step: 0.005 },
+  { section: "globalWave", key: "globalWave.swellAging", label: "Swell Aging", min: 0, max: 2, step: 0.05 },
+  { section: "globalWave", key: "globalWave.crestRounding", label: "Crest Rounding", min: 0, max: 1, step: 0.01 },
 
   // ═══ Wind ═══
   { section: "wind", key: "wind.speed", label: "Speed", min: 0, max: 40, step: 0.5, unit: "m/s" },

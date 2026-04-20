@@ -2,6 +2,7 @@ import { Play, Pause, RotateCcw, Camera, Download, Settings, Maximize2 } from "l
 import { useState } from "react";
 import type { OceanParams } from "@/types/ocean-params";
 import { defaultOceanParams } from "@/types/ocean-params";
+import { LeftRail } from "./LeftRail";
 
 interface ToolbarProps {
   params: OceanParams;
@@ -13,6 +14,8 @@ interface ToolbarProps {
 export function Toolbar({ onReset, onTogglePlay, isPlaying }: ToolbarProps) {
   return (
     <div className="h-9 bg-panel-header border-b border-border flex items-center px-2 gap-1">
+      <LeftRail />
+      <div className="h-4 w-px bg-border mx-1" />
       <div className="flex items-center gap-0.5">
         <ToolbarButton icon={isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />} label={isPlaying ? "Pause" : "Play"} onClick={onTogglePlay} active={isPlaying} />
         <ToolbarButton icon={<RotateCcw className="h-3.5 w-3.5" />} label="Reset" onClick={onReset} />

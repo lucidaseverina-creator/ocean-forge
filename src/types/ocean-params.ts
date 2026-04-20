@@ -14,6 +14,28 @@ export interface WaveGroupParams {
   numWaves: number;
   frequencySpread: number;
   amplitudeDecay: number;
+  // ── Spectrum & shape (advanced) ────────────────────────────
+  spectrumMode: number;        // 0=Mono, 1=Pierson-Moskowitz, 2=JONSWAP, 3=Gaussian, 4=TMA, 5=Ochi-Hubble, 6=Donelan-Banner, 7=Power
+  peakEnhancement: number;     // JONSWAP gamma (1..7)
+  spectralWidth: number;       // sigma for Gaussian / Ochi
+  fetchKm: number;             // wind fetch (km) for PM/JONSWAP
+  frontSteepness: number;      // 0..2 — sharpness of leading face
+  rearSteepness: number;       // 0..2 — sharpness of trailing face
+  crestSharpness: number;      // 1=sine, >1 sharpens crests, <1 rounds
+  troughFlatness: number;      // 0..1 flattens troughs (Stokes-like)
+  asymmetry: number;           // -1..1 horizontal lean (plunging)
+  directionalExponent: number; // cos^N spreading; higher=narrower beam
+  frequencyJitter: number;     // 0..1 per sub-wave freq noise
+  amplitudeJitter: number;     // 0..1 per sub-wave amp noise
+  directionJitter: number;     // 0..1 per sub-wave dir noise (radians scale)
+  phaseJitter: number;         // 0..1 random phase mix
+  spatialJitter: number;       // 0..1 break grid via domain warp on wave coords
+  spatialJitterScale: number;  // scale of the spatial warp noise
+  waveAge: number;             // 0=young/sharp, 1=mature/round
+  groupSpeedMod: number;       // dispersion modifier (deep=1, shallow<1)
+  obliquity: number;           // skews crest lines for plunging breakers
+  wavelengthMin: number;       // m — overrides freq if >0
+  wavelengthMax: number;       // m — overrides freq if >0
 }
 
 export interface GlobalWaveParams {
@@ -25,6 +47,12 @@ export interface GlobalWaveParams {
   directionalSpread: number;
   breakingThreshold: number;
   waveEvolution: number;
+  antiGridJitter: number;       // global break-the-grid intensity
+  antiGridScale: number;
+  spectrumBlend: number;        // 0..1 blend mono vs spectrum amplitudes
+  stokes3Order: number;         // 3rd-order Stokes amount
+  swellAging: number;           // global age multiplier
+  crestRounding: number;        // global mature-swell rounding
 }
 
 export interface WindParams {
@@ -230,10 +258,14 @@ export interface AnimationParams {
 }
 
 export interface OceanParams {
+  longSwell: WaveGroupParams;
   primarySwell: WaveGroupParams;
   secondarySwell: WaveGroupParams;
+  crossSwell: WaveGroupParams;
   windSea: WaveGroupParams;
   chop: WaveGroupParams;
+  ripple: WaveGroupParams;
+  microChop: WaveGroupParams;
   globalWave: GlobalWaveParams;
   wind: WindParams;
   foam: FoamParams;

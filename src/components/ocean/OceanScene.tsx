@@ -14,11 +14,12 @@ export function OceanScene({ params }: OceanSceneProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    setCaptureCanvas(() => () => {
+    const fn = () => {
       const c = canvasRef.current;
       if (!c) return null;
       try { return c.toDataURL("image/png"); } catch { return null; }
-    });
+    };
+    setCaptureCanvas(fn);
     return () => setCaptureCanvas(null);
   }, [setCaptureCanvas]);
 

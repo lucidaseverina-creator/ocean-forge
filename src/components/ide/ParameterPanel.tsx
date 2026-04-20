@@ -5,7 +5,7 @@ import {
 import { ParamSection } from "./ParamSection";
 import { ParamSlider } from "./ParamSlider";
 import { sections, paramDefs } from "@/data/param-definitions";
-import type { OceanParams } from "@/types/ocean-params";
+import { defaultOceanParams, type OceanParams } from "@/types/ocean-params";
 
 const iconMap: Record<string, React.ReactNode> = {
   Waves: <Waves className="h-3.5 w-3.5" />,
@@ -33,8 +33,11 @@ interface ParameterPanelProps {
 function getNestedValue(obj: any, path: string): number {
   const parts = path.split(".");
   let val = obj;
-  for (const p of parts) val = val[p];
-  return val as number;
+  for (const p of parts) {
+    if (val == null) return 0;
+    val = val[p];
+  }
+  return (typeof val === "number" ? val : 0);
 }
 
 function setNestedValue(obj: any, path: string, value: number): any {
@@ -47,6 +50,16 @@ export function ParameterPanel({ params, onChange }: ParameterPanelProps) {
   const handleChange = (key: string, value: number) => {
     onChange(setNestedValue(params, key, value));
   };
+
+  // Defensive: ensure all wave groups + sub-fields exist (covers HMR / migrations)
+  const safeParams: OceanParams = { ...defaultOceanParams, ...params } as OceanParams;
+  for (const key of Object.keys(defaultOceanParams) as (keyof OceanParams)[]) {
+    const def = (defaultOceanParams as any)[key];
+    const cur = (params as any)?.[key];
+    if (def && typeof def === "object") {
+      (safeParams as any)[key] = { ...def, ...(cur ?? {}) };
+    }
+  }
 
   // Group param defs by section
   const grouped = new Map<string, typeof paramDefs>();
@@ -83,7 +96,7 @@ export function ParameterPanel({ params, onChange }: ParameterPanelProps) {
               <ParamSlider
                 key={def.key}
                 label={def.label}
-                value={getNestedValue(params, def.key)}
+                value={getNestedValue(safeParams, def.key)}
                 min={def.min}
                 max={def.max}
                 step={def.step}

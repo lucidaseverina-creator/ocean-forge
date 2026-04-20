@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import type { OceanParams, WaveGroupParams } from "@/types/ocean-params";
+import { defaultOceanParams, type OceanParams, type WaveGroupParams } from "@/types/ocean-params";
 import { oceanVertexShader } from "@/shaders/ocean-vertex.glsl";
 import { oceanFragmentShader } from "@/shaders/ocean-fragment.glsl";
 
@@ -10,9 +10,18 @@ interface OceanMeshProps {
 }
 
 function getGroups(p: OceanParams): WaveGroupParams[] {
+  const d = defaultOceanParams;
+  const merge = (g: WaveGroupParams | undefined, fallback: WaveGroupParams) =>
+    ({ ...fallback, ...(g ?? {}) }) as WaveGroupParams;
   return [
-    p.longSwell, p.primarySwell, p.secondarySwell, p.crossSwell,
-    p.windSea, p.chop, p.ripple, p.microChop,
+    merge(p.longSwell, d.longSwell),
+    merge(p.primarySwell, d.primarySwell),
+    merge(p.secondarySwell, d.secondarySwell),
+    merge(p.crossSwell, d.crossSwell),
+    merge(p.windSea, d.windSea),
+    merge(p.chop, d.chop),
+    merge(p.ripple, d.ripple),
+    merge(p.microChop, d.microChop),
   ];
 }
 

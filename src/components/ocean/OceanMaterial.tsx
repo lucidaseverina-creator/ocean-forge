@@ -1,7 +1,7 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import type { OceanParams } from "@/types/ocean-params";
+import type { OceanParams, WaveGroupParams } from "@/types/ocean-params";
 import { oceanVertexShader } from "@/shaders/ocean-vertex.glsl";
 import { oceanFragmentShader } from "@/shaders/ocean-fragment.glsl";
 
@@ -9,202 +9,237 @@ interface OceanMeshProps {
   params: OceanParams;
 }
 
-function getWaveGroupArrays(p: OceanParams) {
-  const groups = [p.primarySwell, p.secondarySwell, p.windSea, p.chop];
-  return {
-    enabled: groups.map((g) => g.enabled),
-    amp: groups.map((g) => g.amplitude),
-    freq: groups.map((g) => g.frequency),
-    steep: groups.map((g) => g.steepness),
-    dir: groups.map((g) => g.direction),
-    speed: groups.map((g) => g.speed),
-    spread: groups.map((g) => g.spread),
-    phase: groups.map((g) => g.phaseOffset),
-    numWaves: groups.map((g) => g.numWaves),
-    freqSpread: groups.map((g) => g.frequencySpread),
-    ampDecay: groups.map((g) => g.amplitudeDecay),
-  };
+function getGroups(p: OceanParams): WaveGroupParams[] {
+  return [
+    p.longSwell, p.primarySwell, p.secondarySwell, p.crossSwell,
+    p.windSea, p.chop, p.ripple, p.microChop,
+  ];
+}
+
+function pick<K extends keyof WaveGroupParams>(gs: WaveGroupParams[], k: K): number[] {
+  return gs.map((g) => g[k] as number);
 }
 
 export function OceanMesh({ params }: OceanMeshProps) {
   const meshRef = useRef<THREE.Mesh>(null);
 
-  const uniforms = useMemo(
-    () => ({
+  const uniforms = useMemo(() => {
+    const z8 = () => [0, 0, 0, 0, 0, 0, 0, 0];
+    const o8 = () => [1, 1, 1, 1, 1, 1, 1, 1];
+    return {
       uTime: { value: 0 },
-      // Wave groups
-      uWGEnabled: { value: [1, 1, 1, 1] },
-      uWGAmp: { value: [1, 0.5, 0.3, 0.1] },
-      uWGFreq: { value: [0.3, 0.5, 1.0, 2.0] },
-      uWGSteep: { value: [0.4, 0.3, 0.25, 0.2] },
-      uWGDir: { value: [45, 120, 60, 75] },
-      uWGSpeed: { value: [1, 0.9, 1.3, 1.5] },
-      uWGSpread: { value: [25, 35, 55, 90] },
-      uWGPhase: { value: [0, 1.2, 2.8, 4.1] },
-      uWGNumWaves: { value: [6, 5, 6, 8] },
-      uWGFreqSpread: { value: [1.3, 1.4, 1.5, 1.6] },
-      uWGAmpDecay: { value: [0.72, 0.65, 0.6, 0.55] },
-      // Global wave
-      uChoppiness: { value: 0.6 },
+      uWGEnabled: { value: o8() },
+      uWGAmp: { value: z8() },
+      uWGFreq: { value: z8() },
+      uWGSteep: { value: z8() },
+      uWGDir: { value: z8() },
+      uWGSpeed: { value: o8() },
+      uWGSpread: { value: z8() },
+      uWGPhase: { value: z8() },
+      uWGNumWaves: { value: o8() },
+      uWGFreqSpread: { value: o8() },
+      uWGAmpDecay: { value: o8() },
+      uWGSpectrum: { value: z8() },
+      uWGPeakEnh: { value: o8() },
+      uWGSpecWidth: { value: o8() },
+      uWGFetch: { value: o8() },
+      uWGFront: { value: o8() },
+      uWGRear: { value: o8() },
+      uWGCrestSharp: { value: o8() },
+      uWGTroughFlat: { value: z8() },
+      uWGAsym: { value: z8() },
+      uWGDirExp: { value: o8() },
+      uWGFreqJit: { value: z8() },
+      uWGAmpJit: { value: z8() },
+      uWGDirJit: { value: z8() },
+      uWGPhaseJit: { value: o8() },
+      uWGSpatJit: { value: z8() },
+      uWGSpatJitScale: { value: o8() },
+      uWGAge: { value: z8() },
+      uWGGroupSpeed: { value: o8() },
+      uWGObliquity: { value: z8() },
+      uWGWLMin: { value: z8() },
+      uWGWLMax: { value: z8() },
+      // Global
+      uChoppiness: { value: 0.4 },
       uGlobalAmp: { value: 1.0 },
-      uPeakSharp: { value: 1.0 },
-      uNonlinearity: { value: 0.3 },
+      uPeakSharp: { value: 1.2 },
+      uNonlinearity: { value: 0.15 },
+      uAntiGridJitter: { value: 0.5 },
+      uAntiGridScale: { value: 0.025 },
+      uSpectrumBlend: { value: 0.85 },
+      uStokes3: { value: 0.05 },
+      uSwellAging: { value: 1.0 },
+      uCrestRounding: { value: 0.3 },
       // Wind
-      uWindSpeed: { value: 8.0 },
-      uWindDir: { value: 55 },
-      uGustIntensity: { value: 0.3 },
-      uGustFreq: { value: 0.15 },
-      uTurbulence: { value: 0.2 },
+      uWindSpeed: { value: 10.0 },
+      uWindDir: { value: 210 },
+      uGustIntensity: { value: 0.25 },
+      uGustFreq: { value: 0.12 },
+      uTurbulence: { value: 0.15 },
       // FBM
-      uFBMOctaves: { value: 4.0 },
-      uFBMAmp: { value: 0.15 },
-      uFBMFreq: { value: 0.8 },
-      uFBMLacunarity: { value: 2.1 },
-      uFBMGain: { value: 0.45 },
-      uDomainWarp: { value: 0.2 },
-      uWarpStrength: { value: 0.3 },
-      uWarpFreq: { value: 0.5 },
+      uFBMOctaves: { value: 5 },
+      uFBMAmp: { value: 0.12 },
+      uFBMFreq: { value: 0.6 },
+      uFBMLacunarity: { value: 2.0 },
+      uFBMGain: { value: 0.42 },
+      uDomainWarp: { value: 0.3 },
+      uWarpStrength: { value: 0.25 },
+      uWarpFreq: { value: 0.4 },
       // Capillary
-      uCapScale: { value: 40.0 },
-      uCapIntensity: { value: 0.35 },
-      uCapWindAlign: { value: 0.7 },
-      uCapDamping: { value: 0.98 },
-      uCapFreqs: { value: [0.15, 0.23, 0.31, 0.39] },
-      uCapAmps: { value: [0.006, 0.004, 0.003, 0.002] },
-      uCapSpeed: { value: 2.5 },
+      uCapScale: { value: 35.0 },
+      uCapIntensity: { value: 0.25 },
+      uCapWindAlign: { value: 0.65 },
+      uCapDamping: { value: 0.96 },
+      uCapFreqs: { value: [0.12, 0.2, 0.28, 0.37] },
+      uCapAmps: { value: [0.005, 0.003, 0.002, 0.001] },
+      uCapSpeed: { value: 2.0 },
       // Rain
-      uRainIntensity: { value: 0.0 },
-      uRainDropScale: { value: 1.0 },
+      uRainIntensity: { value: 0 },
+      uRainDropScale: { value: 1 },
       uRainRippleIntensity: { value: 0.3 },
-      uRainRippleScale: { value: 15.0 },
-      // Foam Jacobian
-      uJacobianThreshold: { value: 0.4 },
-      // Fragment uniforms
+      uRainRippleScale: { value: 15 },
+      uJacobianThreshold: { value: 0.35 },
+      // Fragment
       uSunDir: { value: new THREE.Vector3(0, 1, 0) },
-      uSunIntensity: { value: 1.5 },
-      uSunColorTemp: { value: 5500 },
-      uSkyIntensity: { value: 0.5 },
-      uSkyTurbidity: { value: 2.0 },
-      uAmbientIntensity: { value: 0.15 },
-      uAmbientColor: { value: new THREE.Vector3(0.15, 0.18, 0.25) },
-      uSpecRoughness1: { value: 0.015 },
-      uSpecRoughness2: { value: 0.12 },
-      uBloomThreshold: { value: 0.8 },
-      uBloomIntensity: { value: 0.3 },
-      uGodRayIntensity: { value: 0.15 },
-      uMoonIntensity: { value: 0.0 },
-      uExposureBias: { value: 0.0 },
-      // Optics
+      uSunIntensity: { value: 2.0 },
+      uSunColorTemp: { value: 5200 },
+      uSkyIntensity: { value: 0.6 },
+      uSkyTurbidity: { value: 2.5 },
+      uAmbientIntensity: { value: 0.2 },
+      uAmbientColor: { value: new THREE.Vector3(0.12, 0.16, 0.28) },
+      uSpecRoughness1: { value: 0.008 },
+      uSpecRoughness2: { value: 0.1 },
+      uBloomThreshold: { value: 0.85 },
+      uBloomIntensity: { value: 0.25 },
+      uGodRayIntensity: { value: 0.12 },
+      uMoonIntensity: { value: 0 },
+      uExposureBias: { value: 0 },
       uAbsorptionR: { value: 0.45 },
-      uAbsorptionG: { value: 0.029 },
-      uAbsorptionB: { value: 0.018 },
-      uScatterCoeff: { value: 0.2 },
-      uForwardScatter: { value: 0.7 },
-      uBackScatter: { value: 0.15 },
-      uTurbidity: { value: 0.1 },
+      uAbsorptionG: { value: 0.035 },
+      uAbsorptionB: { value: 0.022 },
+      uScatterCoeff: { value: 0.25 },
+      uForwardScatter: { value: 0.75 },
+      uBackScatter: { value: 0.12 },
+      uTurbidity: { value: 0.05 },
       uFresnelPower: { value: 5.0 },
       uFresnelBias: { value: 0.02 },
       uIOR: { value: 1.333 },
-      uSSSIntensity: { value: 0.3 },
-      uSSSDistortion: { value: 0.3 },
-      uSSSPower: { value: 4.0 },
-      uSSSColor: { value: new THREE.Vector3(0.05, 0.65, 0.5) },
-      uSpecRoughness: { value: 0.03 },
-      uSpecIntensity: { value: 1.2 },
-      // Depth
-      uWaterDepth: { value: 50 },
-      uShallowColor: { value: new THREE.Vector3(0.1, 0.6, 0.6) },
-      uDeepColor: { value: new THREE.Vector3(0, 0.08, 0.25) },
-      uVisibility: { value: 30 },
-      uExtinction: { value: new THREE.Vector3(0.4, 0.04, 0.02) },
-      uGradientPower: { value: 0.5 },
-      uDepthDarkening: { value: 0.3 },
-      uDepthFog: { value: 0.1 },
-      uColorGradientBias: { value: 0.5 },
-      // Foam
-      uFoamThreshold: { value: 0.5 },
-      uFoamCoverage: { value: 0.35 },
-      uFoamIntensity: { value: 0.9 },
-      uFoamColor: { value: new THREE.Vector3(0.88, 0.92, 0.95) },
-      uFoamNoiseScale: { value: 1.5 },
-      uFoamNoiseSpeed: { value: 0.3 },
+      uSSSIntensity: { value: 0.45 },
+      uSSSDistortion: { value: 0.25 },
+      uSSSPower: { value: 3.5 },
+      uSSSColor: { value: new THREE.Vector3(0.05, 0.7, 0.55) },
+      uSpecRoughness: { value: 0.02 },
+      uSpecIntensity: { value: 1.5 },
+      uWaterDepth: { value: 80 },
+      uShallowColor: { value: new THREE.Vector3(0.08, 0.45, 0.5) },
+      uDeepColor: { value: new THREE.Vector3(0, 0.05, 0.18) },
+      uVisibility: { value: 40 },
+      uExtinction: { value: new THREE.Vector3(0.35, 0.04, 0.025) },
+      uGradientPower: { value: 0.6 },
+      uDepthDarkening: { value: 0.25 },
+      uDepthFog: { value: 0.08 },
+      uColorGradientBias: { value: 0.45 },
+      uFoamThreshold: { value: 0.45 },
+      uFoamCoverage: { value: 0.3 },
+      uFoamIntensity: { value: 0.85 },
+      uFoamColor: { value: new THREE.Vector3(0.92, 0.95, 0.98) },
+      uFoamNoiseScale: { value: 1.2 },
+      uFoamNoiseSpeed: { value: 0.25 },
       uFoamRoughness: { value: 0.6 },
-      uFoamEdge: { value: 0.3 },
-      uWhitecapThreshold: { value: 0.7 },
-      uWhitecapIntensity: { value: 1.0 },
-      uBubbleDensity: { value: 0.4 },
-      // Atmosphere
-      uFogDensity: { value: 0.007 },
-      uFogColor: { value: new THREE.Vector3(0.035, 0.05, 0.09) },
-      uHazeIntensity: { value: 0.2 },
-      uHorizonBlend: { value: 0.3 },
+      uFoamEdge: { value: 0.25 },
+      uWhitecapThreshold: { value: 0.6 },
+      uWhitecapIntensity: { value: 0.8 },
+      uBubbleDensity: { value: 0.35 },
+      uFogDensity: { value: 0.005 },
+      uFogColor: { value: new THREE.Vector3(0.04, 0.06, 0.12) },
+      uHazeIntensity: { value: 0.15 },
+      uHorizonBlend: { value: 0.35 },
       uRayleighCoeff: { value: 1.0 },
-      uMieCoeff: { value: 0.005 },
-      uMieDirectional: { value: 0.8 },
-      uSkyColor: { value: new THREE.Vector3(0.08, 0.18, 0.45) },
-      uHorizonColor: { value: new THREE.Vector3(0.55, 0.65, 0.78) },
-      uCloudCover: { value: 0.0 },
-      // Surface
+      uMieCoeff: { value: 0.004 },
+      uMieDirectional: { value: 0.82 },
+      uSkyColor: { value: new THREE.Vector3(0.12, 0.25, 0.55) },
+      uHorizonColor: { value: new THREE.Vector3(0.6, 0.7, 0.82) },
+      uCloudCover: { value: 0.15 },
       uNormalStrength: { value: 1.0 },
-      uReflectionDistortion: { value: 0.1 },
+      uReflectionDistortion: { value: 0.08 },
       uWetness: { value: 0.8 },
-      uRoughnessVariation: { value: 0.2 },
-      // Caustics
-      uCausticsEnabled: { value: 1.0 },
-      uCausticsIntensity: { value: 0.5 },
-      uCausticsScale: { value: 8.0 },
-      uCausticsSpeed: { value: 0.8 },
-      uCausticsChromaticSplit: { value: 0.02 },
-      uCausticsComplexity: { value: 2.0 },
-      uCausticsDepthAtten: { value: 0.5 },
-      // Post
-      uExposure: { value: 1.0 },
-      uContrast: { value: 1.0 },
-      uSaturation: { value: 1.0 },
-      uVignetteIntensity: { value: 0.0 },
+      uRoughnessVariation: { value: 0.15 },
+      uCausticsEnabled: { value: 1 },
+      uCausticsIntensity: { value: 0.4 },
+      uCausticsScale: { value: 10.0 },
+      uCausticsSpeed: { value: 0.6 },
+      uCausticsChromaticSplit: { value: 0.015 },
+      uCausticsComplexity: { value: 1.8 },
+      uCausticsDepthAtten: { value: 0.4 },
+      uExposure: { value: 1.1 },
+      uContrast: { value: 1.05 },
+      uSaturation: { value: 1.1 },
+      uVignetteIntensity: { value: 0 },
       uVignetteRadius: { value: 0.8 },
       uGamma: { value: 2.2 },
       uColorTint: { value: new THREE.Vector3(1, 1, 1) },
-      uFilmGrain: { value: 0.0 },
-    }),
-    []
-  );
+      uFilmGrain: { value: 0 },
+    };
+  }, []);
 
   useFrame(({ clock }) => {
     if (!meshRef.current) return;
     const u = (meshRef.current.material as THREE.ShaderMaterial).uniforms;
     const p = params;
-
     u.uTime.value = clock.getElapsedTime() * p.animation.timeScale;
 
-    // Wave groups
-    const wg = getWaveGroupArrays(p);
-    u.uWGEnabled.value = wg.enabled;
-    u.uWGAmp.value = wg.amp;
-    u.uWGFreq.value = wg.freq;
-    u.uWGSteep.value = wg.steep;
-    u.uWGDir.value = wg.dir;
-    u.uWGSpeed.value = wg.speed.map((s) => s * p.animation.globalSpeed);
-    u.uWGSpread.value = wg.spread;
-    u.uWGPhase.value = wg.phase;
-    u.uWGNumWaves.value = wg.numWaves;
-    u.uWGFreqSpread.value = wg.freqSpread;
-    u.uWGAmpDecay.value = wg.ampDecay;
+    const gs = getGroups(p);
+    u.uWGEnabled.value = pick(gs, "enabled");
+    u.uWGAmp.value = pick(gs, "amplitude");
+    u.uWGFreq.value = pick(gs, "frequency");
+    u.uWGSteep.value = pick(gs, "steepness");
+    u.uWGDir.value = pick(gs, "direction");
+    u.uWGSpeed.value = pick(gs, "speed").map((s) => s * p.animation.globalSpeed);
+    u.uWGSpread.value = pick(gs, "spread");
+    u.uWGPhase.value = pick(gs, "phaseOffset");
+    u.uWGNumWaves.value = pick(gs, "numWaves");
+    u.uWGFreqSpread.value = pick(gs, "frequencySpread");
+    u.uWGAmpDecay.value = pick(gs, "amplitudeDecay");
+    u.uWGSpectrum.value = pick(gs, "spectrumMode");
+    u.uWGPeakEnh.value = pick(gs, "peakEnhancement");
+    u.uWGSpecWidth.value = pick(gs, "spectralWidth");
+    u.uWGFetch.value = pick(gs, "fetchKm");
+    u.uWGFront.value = pick(gs, "frontSteepness");
+    u.uWGRear.value = pick(gs, "rearSteepness");
+    u.uWGCrestSharp.value = pick(gs, "crestSharpness");
+    u.uWGTroughFlat.value = pick(gs, "troughFlatness");
+    u.uWGAsym.value = pick(gs, "asymmetry");
+    u.uWGDirExp.value = pick(gs, "directionalExponent");
+    u.uWGFreqJit.value = pick(gs, "frequencyJitter");
+    u.uWGAmpJit.value = pick(gs, "amplitudeJitter");
+    u.uWGDirJit.value = pick(gs, "directionJitter");
+    u.uWGPhaseJit.value = pick(gs, "phaseJitter");
+    u.uWGSpatJit.value = pick(gs, "spatialJitter");
+    u.uWGSpatJitScale.value = pick(gs, "spatialJitterScale");
+    u.uWGAge.value = pick(gs, "waveAge");
+    u.uWGGroupSpeed.value = pick(gs, "groupSpeedMod");
+    u.uWGObliquity.value = pick(gs, "obliquity");
+    u.uWGWLMin.value = pick(gs, "wavelengthMin");
+    u.uWGWLMax.value = pick(gs, "wavelengthMax");
 
-    // Global
     u.uChoppiness.value = p.globalWave.choppiness;
     u.uGlobalAmp.value = p.globalWave.globalAmplitude;
     u.uPeakSharp.value = p.globalWave.peakSharpening;
     u.uNonlinearity.value = p.globalWave.nonlinearity;
+    u.uAntiGridJitter.value = p.globalWave.antiGridJitter;
+    u.uAntiGridScale.value = p.globalWave.antiGridScale;
+    u.uSpectrumBlend.value = p.globalWave.spectrumBlend;
+    u.uStokes3.value = p.globalWave.stokes3Order;
+    u.uSwellAging.value = p.globalWave.swellAging;
+    u.uCrestRounding.value = p.globalWave.crestRounding;
 
-    // Wind
     u.uWindSpeed.value = p.wind.speed;
     u.uWindDir.value = p.wind.direction;
     u.uGustIntensity.value = p.wind.gustIntensity;
     u.uGustFreq.value = p.wind.gustFrequency;
     u.uTurbulence.value = p.wind.turbulence;
 
-    // FBM
     u.uFBMOctaves.value = p.detail.fbmOctaves;
     u.uFBMAmp.value = p.detail.fbmAmplitude;
     u.uFBMFreq.value = p.detail.fbmFrequency;
@@ -214,7 +249,6 @@ export function OceanMesh({ params }: OceanMeshProps) {
     u.uWarpStrength.value = p.detail.warpStrength;
     u.uWarpFreq.value = p.detail.warpFrequency;
 
-    // Capillary
     u.uCapScale.value = p.capillary.scale;
     u.uCapIntensity.value = p.capillary.intensity;
     u.uCapWindAlign.value = p.capillary.windAlignment;
@@ -223,13 +257,11 @@ export function OceanMesh({ params }: OceanMeshProps) {
     u.uCapAmps.value = [p.capillary.amplitude1, p.capillary.amplitude2, p.capillary.amplitude3, p.capillary.amplitude4];
     u.uCapSpeed.value = p.capillary.speedMult;
 
-    // Rain
     u.uRainIntensity.value = p.rain.intensity;
     u.uRainDropScale.value = p.rain.dropScale;
     u.uRainRippleIntensity.value = p.rain.rippleIntensity;
     u.uRainRippleScale.value = p.rain.rippleScale;
 
-    // Foam
     u.uJacobianThreshold.value = p.foam.jacobianThreshold;
     u.uFoamThreshold.value = p.foam.threshold;
     u.uFoamCoverage.value = p.foam.coverage;
@@ -243,7 +275,6 @@ export function OceanMesh({ params }: OceanMeshProps) {
     u.uWhitecapIntensity.value = p.foam.whitecapIntensity;
     u.uBubbleDensity.value = p.foam.bubbleDensity;
 
-    // Lighting
     const az = (p.lighting.sunAzimuth * Math.PI) / 180;
     const el = (p.lighting.sunElevation * Math.PI) / 180;
     u.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az));
@@ -261,7 +292,6 @@ export function OceanMesh({ params }: OceanMeshProps) {
     u.uMoonIntensity.value = p.lighting.moonIntensity;
     u.uExposureBias.value = p.lighting.exposureBias;
 
-    // Optics
     u.uAbsorptionR.value = p.optics.absorptionR;
     u.uAbsorptionG.value = p.optics.absorptionG;
     u.uAbsorptionB.value = p.optics.absorptionB;
@@ -279,7 +309,6 @@ export function OceanMesh({ params }: OceanMeshProps) {
     u.uSpecRoughness.value = p.optics.specRoughness;
     u.uSpecIntensity.value = p.optics.specIntensity;
 
-    // Depth
     u.uWaterDepth.value = p.depth.waterDepth;
     u.uShallowColor.value.set(p.depth.shallowColorR, p.depth.shallowColorG, p.depth.shallowColorB);
     u.uDeepColor.value.set(p.depth.deepColorR, p.depth.deepColorG, p.depth.deepColorB);
@@ -290,7 +319,6 @@ export function OceanMesh({ params }: OceanMeshProps) {
     u.uDepthFog.value = p.depth.depthFog;
     u.uColorGradientBias.value = p.depth.colorGradientBias;
 
-    // Atmosphere
     u.uFogDensity.value = p.atmosphere.fogDensity;
     u.uFogColor.value.set(p.atmosphere.fogColorR, p.atmosphere.fogColorG, p.atmosphere.fogColorB);
     u.uHazeIntensity.value = p.atmosphere.hazeIntensity;
@@ -302,13 +330,11 @@ export function OceanMesh({ params }: OceanMeshProps) {
     u.uHorizonColor.value.set(p.atmosphere.horizonColorR, p.atmosphere.horizonColorG, p.atmosphere.horizonColorB);
     u.uCloudCover.value = p.atmosphere.cloudCover;
 
-    // Surface
     u.uNormalStrength.value = p.surface.normalMapStrength;
     u.uReflectionDistortion.value = p.surface.reflectionDistortion;
     u.uWetness.value = p.surface.wetness;
     u.uRoughnessVariation.value = p.surface.roughnessVariation;
 
-    // Caustics
     u.uCausticsEnabled.value = p.caustics.enabled;
     u.uCausticsIntensity.value = p.caustics.intensity;
     u.uCausticsScale.value = p.caustics.scale;
@@ -317,7 +343,6 @@ export function OceanMesh({ params }: OceanMeshProps) {
     u.uCausticsComplexity.value = p.caustics.complexity;
     u.uCausticsDepthAtten.value = p.caustics.depthAttenuation;
 
-    // Post
     u.uExposure.value = p.post.exposure;
     u.uContrast.value = p.post.contrast;
     u.uSaturation.value = p.post.saturation;

@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { InfoPopover } from "./InfoPopover";
 
 interface ParamSliderProps {
   label: string;
@@ -8,9 +9,10 @@ interface ParamSliderProps {
   step: number;
   unit?: string;
   onChange: (value: number) => void;
+  paramKey?: string;
 }
 
-export function ParamSlider({ label, value, min, max, step, unit = "", onChange }: ParamSliderProps) {
+export function ParamSlider({ label, value, min, max, step, unit = "", onChange, paramKey }: ParamSliderProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
 
@@ -31,9 +33,12 @@ export function ParamSlider({ label, value, min, max, step, unit = "", onChange 
 
   return (
     <div className="flex items-center gap-2 py-1 group">
-      <span className="text-xs font-mono text-muted-foreground w-28 truncate shrink-0">
-        {label}
-      </span>
+      <div className="flex items-center gap-1 w-28 shrink-0">
+        <span className="text-xs font-mono text-muted-foreground truncate flex-1">
+          {label}
+        </span>
+        {paramKey && <InfoPopover paramKey={paramKey} />}
+      </div>
       <div className="flex-1 relative h-4 flex items-center">
         <div className="absolute inset-0 h-1.5 top-1/2 -translate-y-1/2 rounded-full bg-slider-track overflow-hidden">
           <div

@@ -2,10 +2,12 @@ import {
   Waves, Wind, Droplets, Sun, Eye, Sparkles, Layers, Zap, Activity,
   Cloud, Mountain, Palette, CloudRain, SlidersHorizontal, Timer,
 } from "lucide-react";
-import { ParamSection } from "./ParamSection";
 import { ParamSlider } from "./ParamSlider";
 import { sections, paramDefs } from "@/data/param-definitions";
 import { defaultOceanParams, type OceanParams } from "@/types/ocean-params";
+import { useStudio } from "@/state/studio-store";
+import { getEncyclopediaEntry } from "@/data/encyclopedia";
+import { BookOpen } from "lucide-react";
 
 const iconMap: Record<string, React.ReactNode> = {
   Waves: <Waves className="h-3.5 w-3.5" />,
@@ -50,6 +52,8 @@ export function ParameterPanel({ params, onChange }: ParameterPanelProps) {
   const handleChange = (key: string, value: number) => {
     onChange(setNestedValue(params, key, value));
   };
+  const activeSection = useStudio(s => s.activeSection);
+  const openEncyclopedia = useStudio(s => s.openEncyclopedia);
 
   // Defensive: ensure all wave groups + sub-fields exist (covers HMR / migrations)
   const safeParams: OceanParams = { ...defaultOceanParams, ...params } as OceanParams;
@@ -61,52 +65,61 @@ export function ParameterPanel({ params, onChange }: ParameterPanelProps) {
     }
   }
 
-  // Group param defs by section
-  const grouped = new Map<string, typeof paramDefs>();
-  for (const def of paramDefs) {
-    if (!grouped.has(def.section)) grouped.set(def.section, []);
-    grouped.get(def.section)!.push(def);
-  }
-
-  const totalParams = paramDefs.length;
+  const sec = sections.find(s => s.id === activeSection) ?? sections[0];
+  const defs = paramDefs.filter(d => d.section === sec.id);
+  const sectionEntry = getEncyclopediaEntry(`section.${sec.id}`);
 
   return (
     <div className="h-full overflow-y-auto scrollbar-thin">
       <div className="px-3 py-2 bg-panel-header border-b border-border flex items-center justify-between">
-        <h2 className="text-xs font-mono font-bold uppercase tracking-widest text-primary text-glow">
-          Inspector
-        </h2>
-        <span className="text-[9px] font-mono text-muted-foreground">
-          {totalParams} params
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+            {sec.badge ?? sec.id.toUpperCase()}
+          </span>
+          <h2 className="text-xs font-mono font-bold uppercase tracking-widest text-primary text-glow truncate">
+            {sec.title}
+          </h2>
+        </div>
+        <span className="text-[9px] font-mono text-muted-foreground shrink-0">
+          {defs.length}
         </span>
       </div>
 
-      {sections.map((sec) => {
-        const defs = grouped.get(sec.id);
-        if (!defs || defs.length === 0) return null;
-        return (
-          <ParamSection
-            key={sec.id}
-            title={sec.title}
-            icon={iconMap[sec.icon]}
-            badge={`${defs.length}`}
-            defaultOpen={sec.defaultOpen ?? false}
+      {sectionEntry && (
+        <div className="px-3 py-2 border-b border-border bg-panel-bg/50">
+          <p className="text-[10px] font-mono text-muted-foreground leading-relaxed">
+            {sectionEntry.short}
+          </p>
+          <button
+            onClick={() => openEncyclopedia(`section.${sec.id}`)}
+            className="mt-1.5 flex items-center gap-1 text-[10px] font-mono text-primary hover:text-primary/80 transition-colors"
           >
-            {defs.map((def) => (
-              <ParamSlider
-                key={def.key}
-                label={def.label}
-                value={getNestedValue(safeParams, def.key)}
-                min={def.min}
-                max={def.max}
-                step={def.step}
-                unit={def.unit}
-                onChange={(v) => handleChange(def.key, v)}
-              />
-            ))}
-          </ParamSection>
-        );
-      })}
+            <BookOpen className="h-2.5 w-2.5" />
+            Read full entry
+          </button>
+        </div>
+      )}
+
+      <div className="px-3 py-2 space-y-0.5">
+        {defs.length === 0 && (
+          <div className="py-8 text-center text-xs font-mono text-muted-foreground">
+            No parameters in this section yet.
+          </div>
+        )}
+        {defs.map((def) => (
+          <ParamSlider
+            key={def.key}
+            paramKey={def.key}
+            label={def.label}
+            value={getNestedValue(safeParams, def.key)}
+            min={def.min}
+            max={def.max}
+            step={def.step}
+            unit={def.unit}
+            onChange={(v) => handleChange(def.key, v)}
+          />
+        ))}
+      </div>
     </div>
   );
 }

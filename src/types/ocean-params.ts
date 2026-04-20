@@ -391,8 +391,6 @@ export const defaultOceanParams: OceanParams = {
     swellAging: 1.0,
     crestRounding: 0.3,
   },
-    waveEvolution: 0.1,
-  },
   wind: {
     speed: 10.0,
     direction: 210,

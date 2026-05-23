@@ -1,0 +1,15 @@
+{
+  "source": "hybridsplash-thesis.txt",
+  "source_bytes": 358085,
+  "source_sha256": "4fd387af31918fdcda93fe2953bb3da45a26cbf45092cdc5ef487641f19b303c",
+  "converted_md": "hybridsplash-thesis-original-converted.md",
+  "converted_md_bytes": 344906,
+  "converted_md_sha256": "82f70c0d43f3360fc625f6ee09387facd56b46bdf7939d27ab12b0ff3c753ee5",
+  "rebuilt_md": "hybridsplash-thesis-v2-rebuilt.md",
+  "rebuilt_md_bytes": 71271,
+  "rebuilt_md_sha256": "e0858460f647c134e0d01d68ba9f8f89131340f39e9653a20c17decba66665e5",
+  "analysis_md": "hybridsplash-thesis-rebuild-analysis.md",
+  "analysis_md_bytes": 4522,
+  "analysis_md_sha256": "3271e063856a1f2394e6fd24a3bef5f2187ca604be288c77e120e091ba3653b2",
+  "notes": "Converted original Markdown-ish text to .md and generated a v2 canonical rebuild plus analysis report."
+}

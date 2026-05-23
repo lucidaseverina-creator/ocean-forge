@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { OceanScene } from "@/components/ocean/OceanScene";
-import { ParameterPanel } from "@/components/ide/ParameterPanel";
+import { SectionView } from "@/components/ide/SectionView";
 import { StatusBar } from "@/components/ide/StatusBar";
 import { Toolbar } from "@/components/ide/Toolbar";
 import { SectionRail } from "@/components/ide/SectionRail";
@@ -74,8 +74,8 @@ const Index = () => {
 
         {/* Right: Inspector — single-section view */}
         {rightOpen && (
-          <div className="w-72 border-l border-border flex flex-col shrink-0">
-            <ParameterPanel params={params} onChange={setParams} />
+          <div className="w-[22rem] border-l border-border flex flex-col shrink-0 bg-panel-bg">
+            <SectionView params={params} onChange={setParams} />
           </div>
         )}
         {/* Right: icon rail (always visible) */}
